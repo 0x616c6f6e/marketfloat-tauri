@@ -208,7 +208,7 @@
   }
 
   function open(read) {
-    const { item } = read();
+    const item = read();
     hide();
     if (item) api.openChart(item.key);
   }
