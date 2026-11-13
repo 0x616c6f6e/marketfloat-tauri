@@ -53,6 +53,10 @@
     if (active) void show(active);
   }
 
+  function repaint() {
+    if (!canvas.hidden && active?.load?.candles) draw(active.load.candles);
+  }
+
   function place(row) {
     const bounds = row.getBoundingClientRect();
     const { width, height } = preview.getBoundingClientRect();
@@ -64,12 +68,15 @@
     preview.style.top = Math.max(edge, Math.min(preferred, window.innerHeight - height - edge)) + 'px';
   }
 
-  function draw(candles, redUp) {
+  function draw(candles) {
     const { width, height } = canvas.getBoundingClientRect();
     const ratio = window.devicePixelRatio || 1;
     canvas.width = Math.round(width * ratio);
     canvas.height = Math.round(height * ratio);
     const g = canvas.getContext('2d');
+    const colors = getComputedStyle(canvas);
+    const rise = colors.getPropertyValue('--rise').trim();
+    const fall = colors.getPropertyValue('--fall').trim();
     g.scale(ratio, ratio);
     const plot = { left: 3, right: width - 54, top: 8, bottom: height - 63 };
     const volumeTop = plot.bottom + 12;
@@ -104,7 +111,7 @@
     g.stroke();
     for (const [index, bar] of candles.entries()) {
       const x = Math.round(plot.left + (index + 0.5) * step) + 0.5;
-      const color = bar.close === bar.open ? '#9aadc8' : (bar.close > bar.open) === redUp ? '#ff899d' : '#74dfac';
+      const color = bar.close === bar.open ? '#9aadc8' : bar.close > bar.open ? rise : fall;
       g.strokeStyle = g.fillStyle = color;
       g.beginPath();
       g.moveTo(x, y(bar.high));
@@ -132,7 +139,7 @@
 
   async function show(request) {
     if (active !== request || !request.row.isConnected || !request.row.getClientRects().length) return;
-    const { item, redUp } = request.read();
+    const item = request.read();
     if (!item) return;
     const load = { period };
     request.load = load;
@@ -169,7 +176,8 @@
     volumeDetails.textContent = '成交量 ' + (Number.isFinite(last.volume) ? volumes.format(last.volume) + unit : '—');
     canvas.setAttribute('aria-label', last.date + ' ' + periods[period] + '。' +
       [...summary.children].map(label => label.textContent).concat(volumeDetails.textContent).join('，'));
-    draw(result.candles, redUp);
+    load.candles = result.candles;
+    draw(load.candles);
   }
 
   function attach(row, read) {
@@ -220,5 +228,5 @@
   document.addEventListener('pointerdown', event => { if (!preview.contains(event.target)) hide(); });
   window.addEventListener('blur', () => hide());
   document.addEventListener('visibilitychange', () => { if (document.hidden) hide(); });
-  window.chartPreview = { attach, hide, setPeriod };
+  window.chartPreview = { attach, hide, repaint, setPeriod };
 })();

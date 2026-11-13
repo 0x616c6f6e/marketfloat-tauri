@@ -454,6 +454,12 @@ fn set_pinned(window: WebviewWindow, pinned: bool) -> Result<()> {
     sync_floating_order(window.app_handle())
 }
 
+#[tauri::command]
+fn set_red_up(window: WebviewWindow, red_up: bool) -> Result<()> {
+    verify(&window, "panel")?;
+    edit_settings(window.app_handle(), |settings| settings.red_up = red_up)
+}
+
 fn sync_floating_order(app: &AppHandle) -> Result<()> {
     let chart_focused = app
         .webview_windows()
@@ -687,6 +693,7 @@ pub fn run() {
             remove_item,
             select_period,
             set_pinned,
+            set_red_up,
             save_proxy,
             open_chart,
             show_orb,

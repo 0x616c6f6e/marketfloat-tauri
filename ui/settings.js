@@ -193,6 +193,7 @@
   function update(value) {
     state = value;
     $('pinned').checked = state.pinned;
+    $('price-colors').value = state.redUp ? 'red' : 'green';
     $('interval').value = state.interval;
     renderSource();
     renderProxy();
@@ -239,6 +240,19 @@
   $('settings-general').addEventListener('change', event => {
     if (event.target.id === 'pinned') api.setPinned(event.target.checked).catch(error => { event.target.checked = !event.target.checked; alert(String(error)); });
     if (event.target.id === 'interval') api.setInterval(Number(event.target.value)).catch(error => { event.target.value = state.interval; alert(String(error)); });
+  });
+  $('price-colors').addEventListener('change', async event => {
+    const select = event.currentTarget;
+    select.disabled = true;
+    status('price-color-status', '');
+    try {
+      await api.setRedUp(select.value === 'red');
+    } catch (error) {
+      select.value = state.redUp ? 'red' : 'green';
+      status('price-color-status', String(error), true);
+    } finally {
+      select.disabled = false;
+    }
   });
   window.marketFloatSettings = { update, open, close };
 })();

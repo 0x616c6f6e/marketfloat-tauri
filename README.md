@@ -31,8 +31,8 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml
 
 ```powershell
 git push -u origin main
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 ## 验收步骤
@@ -50,6 +50,7 @@ git push origin v0.1.0
 - USDT 永续使用 Binance USDⓈ-M 合约。添加 `NVDAUSDT.P` 或 `BINANCE:NVDAUSDT.P` 后，报价和 K 线都使用该永续合约。
 - 「设置 → 行情来源」可按市场配置 JSON 报价接口。支持 `{code}`、`{symbol}`、`{base}`、`{quote}` 和 `data[0].price` 等字段路径。可以先测试再保存。悬停 K 线继续使用内置历史行情源。
 - 刷新频率可设为 3、5、10、15、30 或 60 秒。
+- 在「设置 → 常规 → 涨跌配色」可切换红涨绿跌或绿涨红跌。看板涨跌幅、走势、仓位收益率与悬停 K 线的蜡烛和成交量柱使用同一配色。独立 TradingView 窗口使用 TradingView 自己的配色设置。
 
 ## 价格提醒与合约仓位
 

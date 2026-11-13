@@ -25,7 +25,7 @@ function sparkline(canvas, samples, direction) {
   const g = canvas.getContext('2d');
   const { width, height } = canvas;
   g.clearRect(0, 0, width, height);
-  g.strokeStyle = { rise: '#ff899d', fall: '#74dfac' }[direction] ?? '#7185a2';
+  g.strokeStyle = direction ? getComputedStyle(canvas).getPropertyValue('--' + direction).trim() : '#7185a2';
   g.lineWidth = 2.6;
   g.lineCap = 'round';
   g.lineJoin = 'round';
@@ -109,7 +109,7 @@ function render() {
       });
       row.querySelector('.position-return').addEventListener('click', () => showPosition(item.key));
       row.dataset.key = item.key;
-      window.chartPreview.attach(row, () => ({ item: state.items.find(entry => entry.key === item.key), redUp: true }));
+      window.chartPreview.attach(row, () => state.items.find(entry => entry.key === item.key));
       rows.set(item.key, row);
       list.append(row);
     }
@@ -142,8 +142,11 @@ function render() {
 }
 
 function setState(value) {
+  const colorsChanged = state?.redUp !== value.redUp;
   state = value;
+  document.documentElement.classList.toggle('green-up', !value.redUp);
   window.chartPreview.setPeriod(value.chartPeriod);
+  if (colorsChanged) window.chartPreview.repaint();
   window.marketFloatSettings.update(value);
   render();
 }

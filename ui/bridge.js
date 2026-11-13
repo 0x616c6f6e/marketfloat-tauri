@@ -17,6 +17,7 @@
       .catch(error => ({ error: String(error) })),
     selectPeriod: period => send('select_period', { period }),
     setPinned: pinned => invoke('set_pinned', { pinned }),
+    setRedUp: redUp => invoke('set_red_up', { redUp }),
     setInterval: interval => invoke('set_interval', { interval }),
     refresh: () => send('refresh_quotes'),
     add: (market, code) => invoke('add_item', { market, code }),

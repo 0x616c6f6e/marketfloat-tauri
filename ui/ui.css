@@ -8,9 +8,19 @@
   --text: #eef3fb;
   --muted: #a5b5cc;
   --accent: #7ee8cc;
-  --rise: #ff899d;
-  --fall: #74dfac;
+  --price-red: #ff899d;
+  --price-green: #74dfac;
+  --rise: var(--price-red);
+  --fall: var(--price-green);
+  --rise-bg: #392b3a;
+  --fall-bg: #243d3e;
   --warn: #f3c477;
+}
+:root.green-up {
+  --rise: var(--price-green);
+  --fall: var(--price-red);
+  --rise-bg: #243d3e;
+  --fall-bg: #392b3a;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -119,8 +129,8 @@ h1 { margin: 0; font-size: 23px; font-weight: 750; letter-spacing: -.045em; }
   font-weight: 750;
   font-variant-numeric: tabular-nums;
 }
-.change.rise { color: var(--rise); background: #392b3a; }
-.change.fall { color: var(--fall); background: #243d3e; }
+.change.rise { color: var(--rise); background: var(--rise-bg); }
+.change.fall { color: var(--fall); background: var(--fall-bg); }
 .position-return {
   min-width: 0;
   overflow: hidden;

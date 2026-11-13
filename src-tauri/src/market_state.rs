@@ -122,6 +122,7 @@ impl MarketData {
         json!({
             "items": items,
             "pinned": settings.pinned,
+            "redUp": settings.red_up,
             "proxy": settings.proxy,
             "sources": settings.sources,
             "monitors": settings.monitors,
