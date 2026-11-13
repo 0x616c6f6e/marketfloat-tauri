@@ -13,9 +13,16 @@
       await event.listen('marketfloat-state', ({ payload }) => callback(payload));
     },
     openChart: key => send('open_chart', { key }),
-    chartPreview: async () => ({ error: '历史行情将在下一阶段接入。' }),
+    chartPreview: (key, period) => invoke('chart_preview', { key, period })
+      .catch(error => ({ error: String(error) })),
     selectPeriod: period => send('select_period', { period }),
     setPinned: pinned => invoke('set_pinned', { pinned }),
+    setInterval: interval => invoke('set_interval', { interval }),
+    refresh: () => send('refresh_quotes'),
+    add: (market, code) => invoke('add_item', { market, code }),
+    remove: key => invoke('remove_item', { key }),
+    saveSource: (group, source) => invoke('save_source', { group, source }),
+    testSource: (group, source, code) => invoke('test_source', { group, source, code }),
     saveProxy: proxy => invoke('save_proxy', { proxy }),
     collapse: () => send('show_orb'),
     hide: () => send('hide'),

@@ -1,11 +1,13 @@
 const api = window.marketFloat;
 const $ = selector => document.querySelector(selector);
 const marketNames = { cn: 'A 股', us: '美股', crypto: '加密货币', perp: 'USDT 永续' };
+const examples = { cn: '例如 600519、SH000001、BJ920002', us: '例如 AAPL、BRK.B、SPY', crypto: '例如 BTC-USDT、ETH-USD', perp: '例如 NVDAUSDT.P、BTCUSDT.P' };
 const timeFormat = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 const decimal = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const rows = new Map();
 const filters = [...document.querySelectorAll('[data-market]')];
 const list = $('#watchlist');
+const dialog = $('#add-dialog');
 let state, filter = 'all';
 
 function priceText(value) {
@@ -47,7 +49,7 @@ function updateRow(row, item) {
   const context = item.cached ? '缓存' : item.error ? '未获取' : marketNames[item.market];
   const price = quote ? priceText(quote.price) : '—';
   const pct = quote?.change;
-  const direction = !pct || item.cached ? '' : (pct > 0) === state.redUp ? 'rise' : 'fall';
+  const direction = !pct || item.cached ? '' : pct > 0 ? 'rise' : 'fall';
   row.classList.toggle('stale', Boolean(item.cached || item.error));
   row.querySelector('.name').textContent = name;
   row.querySelector('.code').textContent = name === displayCode ? context : displayCode + ' · ' + context;
@@ -58,8 +60,9 @@ function updateRow(row, item) {
   const change = row.querySelector('.change');
   change.className = 'change ' + direction;
   change.textContent = Number.isFinite(pct) ? (pct > 0 ? '+' : '') + pct.toFixed(2) + '%' : '—';
+  row.querySelector('.row-menu').setAttribute('aria-label', '移出自选：' + name);
   row.setAttribute('aria-label', name + ' ' + displayCode + ' · ' + price + ' ' + item.currency + ' · 按 Enter 打开 TradingView');
-  sparkline(row.querySelector('canvas'), item.samples, direction);
+  sparkline(row.querySelector('canvas'), item.samples ?? [], direction);
 }
 
 function render() {
@@ -78,6 +81,11 @@ function render() {
     let row = rows.get(item.key);
     if (!row) {
       row = $('#row-template').content.firstElementChild.cloneNode(true);
+      row.querySelector('.row-menu').addEventListener('click', async () => {
+        if (!window.confirm('移出自选：' + item.code + '？')) return;
+        try { await api.remove(item.key); }
+        catch (error) { $('#status').textContent = String(error); }
+      });
       row.dataset.key = item.key;
       window.chartPreview.attach(row, () => ({ item: state.items.find(entry => entry.key === item.key), redUp: true }));
       rows.set(item.key, row);
@@ -88,10 +96,27 @@ function render() {
   if (!visible.length) {
     const empty = document.createElement('li');
     empty.className = 'empty';
-    empty.textContent = '该市场暂无示例标的';
+    empty.textContent = '暂无自选，点击「添加」关注标的';
     list.append(empty);
   }
   $('#count').textContent = visible.length + ' 项';
+  $('#frequency').textContent = state.interval + ' 秒刷新';
+  $('#refresh').textContent = state.refreshing ? '更新中…' : '↻ 刷新';
+  let status = '等待获取行情';
+  let indicator = '';
+  if (state.refreshing) status = '正在获取行情…';
+  else if (!state.items.length) status = '自选列表为空';
+  else if (state.items.every(item => !item.quote || item.cached)) {
+    status = state.items.some(item => item.cached) ? '行情连接失败 · 显示缓存' : '行情连接失败 · 等待重试';
+    indicator = 'warn';
+  } else {
+    const latest = Math.max(...state.items.map(item => item.quote?.readAt ?? 0));
+    const errors = state.items.filter(item => item.error).length;
+    status = '更新 ' + timeFormat.format(latest) + (errors ? ' · ' + errors + ' 项未获取' : '');
+    indicator = errors ? 'warn' : 'ok';
+  }
+  $('#status').textContent = status;
+  $('#indicator').className = 'indicator ' + indicator;
 }
 
 function setState(value) {
@@ -108,16 +133,54 @@ function chooseMarket(value) {
   render();
 }
 
+function hint() {
+  $('#add-hint').classList.remove('error');
+  $('#add-hint').textContent = examples[$('#new-market').value];
+}
+
+function showAdd() {
+  if (dialog.open) return;
+  window.marketFloatSettings.close();
+  window.chartPreview.hide();
+  $('#new-market').value = filter === 'all' ? 'cn' : filter;
+  $('#new-code').value = '';
+  hint();
+  dialog.showModal();
+  $('#new-code').focus();
+}
+
 for (const button of filters) button.addEventListener('click', () => chooseMarket(button.dataset.market));
+$('#add').addEventListener('click', showAdd);
+$('#add-cancel').addEventListener('click', () => dialog.close());
+$('#new-market').addEventListener('change', hint);
+$('#add-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const submit = event.currentTarget.querySelector('[type="submit"]');
+  submit.disabled = true;
+  const market = $('#new-market').value;
+  try {
+    const selected = await api.add(market, $('#new-code').value);
+    if (filter !== 'all' && filter !== selected) chooseMarket(selected);
+    list.scrollTop = list.scrollHeight;
+    dialog.close();
+  } catch (error) {
+    $('#add-hint').classList.add('error');
+    $('#add-hint').textContent = String(error);
+    $('#new-code').focus();
+  } finally { submit.disabled = false; }
+});
 $('#collapse').addEventListener('click', api.collapse);
 $('#hide').addEventListener('click', api.hide);
+$('#refresh').addEventListener('click', api.refresh);
 document.addEventListener('keydown', event => {
+  if (event.key === 'F5') { event.preventDefault(); api.refresh(); }
   if (document.querySelector('dialog[open]')) return;
   if (event.key === 'Escape') {
     if (window.chartPreview.hide()) return;
     if (!$('#settings-page').hidden) window.marketFloatSettings.close(true);
     else api.collapse();
   }
+  if (event.ctrlKey && event.key.toLowerCase() === 'n') { event.preventDefault(); showAdd(); }
 });
 api.subscribe(setState).then(() => api.snapshot()).then(setState).catch(error => {
   $('#status').textContent = String(error);

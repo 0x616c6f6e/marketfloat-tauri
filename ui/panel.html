@@ -29,8 +29,9 @@
       <button type="button" data-market="perp" aria-pressed="false">永续</button>
     </nav>
     <section class="section-heading" aria-labelledby="watchlist-title">
-      <h1 id="watchlist-title">示例标的</h1>
+      <h1 id="watchlist-title">自选行情</h1>
       <span id="count"></span>
+      <button id="add" class="primary" type="button" title="添加自选（Ctrl+N）">＋ 添加</button>
     </section>
     <div class="column-headings" aria-hidden="true">
       <span>标的</span><span title="本次启动后最近 32 次成功取价">走势</span><span>最新价</span><span>涨跌幅</span><span></span>
@@ -41,12 +42,17 @@
         <div class="identity"><strong class="name"></strong><span class="code"></span></div>
         <canvas class="sparkline" width="98" height="44" aria-hidden="true"></canvas>
         <div class="pricing"><strong class="price"></strong><span class="currency"></span></div>
-        <div class="quote-moves"><div class="change"></div></div>
+        <div class="quote-moves">
+          <div class="change"></div>
+        </div>
+        <button type="button" class="row-menu" aria-label="移出自选">×</button>
       </li>
     </template>
   </main>
   <footer id="watch-footer">
-    <div class="connection"><span id="indicator" class="indicator"></span><span id="status" role="status">行情接入待迁移 · 双击标的打开图表</span></div>
+    <div class="connection"><span id="indicator" class="indicator"></span><span id="status" role="status">正在连接行情源…</span></div>
+    <span id="frequency">30 秒刷新</span>
+    <button id="refresh" type="button" title="刷新行情（F5）">↻ 刷新</button>
   </footer>
   <aside id="chart-preview" class="chart-preview" aria-label="K 线预览" hidden>
     <div class="preview-heading">
@@ -75,11 +81,51 @@
       <h1 id="settings-title">设置</h1>
     </div>
     <nav class="filters settings-tabs" aria-label="设置分类">
-      <button type="button" data-setting-tab="proxy" aria-pressed="true">网络代理</button>
+      <button type="button" data-setting-tab="source" aria-pressed="true">行情来源</button>
+      <button type="button" data-setting-tab="proxy" aria-pressed="false">网络代理</button>
       <button type="button" data-setting-tab="general" aria-pressed="false">常规</button>
     </nav>
     <div class="settings-body">
-      <section id="settings-proxy" aria-label="网络代理">
+      <section id="settings-source" aria-label="行情来源">
+        <form id="source-form" class="settings-form" novalidate>
+          <label>行情市场
+            <select id="source-group">
+              <option value="cn">A 股</option><option value="us">美股</option>
+              <option value="usd">加密货币 · USD</option><option value="usdt">加密货币 · USDT</option>
+              <option value="perp">USDT 永续</option>
+            </select>
+          </label>
+          <label>数据来源
+            <select id="source-mode"><option value="builtin">内置行情源</option><option value="custom">自定义 JSON 接口</option></select>
+          </label>
+          <p id="source-info" class="setting-copy"></p>
+          <div id="source-custom" class="settings-form" hidden>
+            <label>接口 URL
+              <input id="source-url" type="text" placeholder="https://example.com/quote?symbol={code}" maxlength="2000" spellcheck="false" autocomplete="off">
+            </label>
+            <p class="setting-copy">支持 GET 接口。用 <code>{code}</code> 插入标的代码，也可用 <code>{symbol}</code>、<code>{base}</code> 或 <code>{quote}</code>。</p>
+            <label>最新价字段
+              <input id="source-price" type="text" placeholder="data.price 或 data[0].price" maxlength="160" spellcheck="false">
+            </label>
+            <details class="field-details">
+              <summary>可选字段</summary>
+              <div class="settings-form compact">
+                <label>涨跌幅字段（百分数）<input id="source-change" type="text" placeholder="data.changePercent" maxlength="160" spellcheck="false"></label>
+                <label>基准价字段<input id="source-previous" type="text" placeholder="data.previousClose" maxlength="160" spellcheck="false"></label>
+                <label>标的名称字段<input id="source-name" type="text" placeholder="data.name" maxlength="160" spellcheck="false"></label>
+                <p class="setting-copy">未返回涨跌幅时，可用最新价和基准价计算。</p>
+              </div>
+            </details>
+          </div>
+          <label>测试代码（可选）<input id="source-test-code" type="text" maxlength="24" autocomplete="off" spellcheck="false"></label>
+          <div class="setting-actions">
+            <button id="source-test" class="secondary" type="button">测试取价</button>
+            <button class="primary" type="submit">保存来源</button>
+          </div>
+          <p id="source-status" class="setting-message" role="status"></p>
+        </form>
+      </section>
+      <section id="settings-proxy" aria-label="网络代理" hidden>
         <form id="proxy-form" class="settings-form" novalidate>
           <label>代理模式
             <select id="proxy-mode">
@@ -89,7 +135,7 @@
           <label id="proxy-manual" hidden>代理地址
             <input id="proxy-address" type="text" placeholder="http://127.0.0.1:7890" maxlength="260" autocomplete="off" spellcheck="false">
           </label>
-          <p class="setting-copy">支持 HTTP、HTTPS 和 SOCKS5。更改模式或地址会关闭当前图表，重新打开后使用新代理。</p>
+          <p class="setting-copy">手动代理支持 HTTP、HTTPS 和 SOCKS5。用于报价、K 线和 TradingView。更改代理会关闭当前 TradingView 图表。</p>
           <div class="setting-actions"><button class="primary" type="submit">保存代理</button></div>
           <p id="proxy-status" class="setting-message" role="status"></p>
         </form>
@@ -97,9 +143,34 @@
       <section id="settings-general" aria-label="常规" hidden>
         <div class="general-options">
           <label><span>面板置顶</span><input type="checkbox" id="pinned"></label>
+          <label>
+            <span>刷新频率</span>
+            <select id="interval">
+              <option value="3">3 秒</option>
+              <option value="5">5 秒</option>
+              <option value="10">10 秒</option>
+              <option value="15">15 秒</option>
+              <option value="30">30 秒</option>
+              <option value="60">60 秒</option>
+            </select>
+          </label>
         </div>
       </section>
     </div>
   </main>
+  <dialog id="add-dialog">
+    <form id="add-form">
+      <h2>添加自选</h2>
+      <label for="new-market">市场</label>
+      <select id="new-market">
+        <option value="cn">A 股</option><option value="us">美股</option><option value="crypto">加密货币</option>
+        <option value="perp">USDT 永续</option>
+      </select>
+      <label for="new-code">代码</label>
+      <input id="new-code" type="text" maxlength="24" autocomplete="off" spellcheck="false" required>
+      <p id="add-hint" class="hint" aria-live="polite"></p>
+      <div class="dialog-actions"><button id="add-cancel" type="button">取消</button><button class="primary" type="submit">添加</button></div>
+    </form>
+  </dialog>
 </body>
 </html>

@@ -1,5 +1,10 @@
+use crate::market::{self, Instrument, Source, SourceGroup};
 use serde::{Deserialize, Serialize};
-use std::{fs, io, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs, io,
+    path::Path,
+};
 use tauri::Url;
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -57,7 +62,7 @@ impl Proxy {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Period {
     Day,
@@ -81,7 +86,13 @@ pub struct Settings {
     pub proxy: Proxy,
     pub selected_period: Option<Period>,
     pub pinned: bool,
+    pub watchlist: Vec<Instrument>,
+    pub sources: HashMap<SourceGroup, Source>,
+    pub interval: u64,
 }
+
+pub const INTERVALS: [u64; 6] = [3, 5, 10, 15, 30, 60];
+pub const MAX_ITEMS: usize = 40;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -89,6 +100,9 @@ impl Default for Settings {
             proxy: Proxy::default(),
             selected_period: None,
             pinned: true,
+            watchlist: market::defaults(),
+            sources: HashMap::new(),
+            interval: 30,
         }
     }
 }
@@ -100,6 +114,20 @@ pub fn load(file: &Path) -> Settings {
         .unwrap_or_default();
     if settings.proxy.validate().is_err() {
         settings.proxy = Proxy::default();
+    }
+    let mut unique = HashSet::new();
+    settings.watchlist = settings
+        .watchlist
+        .into_iter()
+        .filter_map(|item| Instrument::parse(item.market, &item.code, &item.name))
+        .filter(|item| unique.insert(item.key()))
+        .take(MAX_ITEMS)
+        .collect();
+    settings
+        .sources
+        .retain(|_, source| source.validate().is_ok());
+    if !INTERVALS.contains(&settings.interval) {
+        settings.interval = 30;
     }
     settings
 }
