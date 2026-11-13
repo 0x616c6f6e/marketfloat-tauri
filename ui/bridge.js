@@ -31,6 +31,7 @@
     collapse: () => send('show_orb'),
     hide: () => send('hide'),
     orbOpen: () => send('show_panel'),
+    orbMenu: (x, y) => send('orb_menu', { x, y }),
     orbDown: () => send('orb_down'),
     orbMove: (dx, dy) => send('orb_move', { dx, dy }),
     orbUp: moved => send('orb_up', { moved }),

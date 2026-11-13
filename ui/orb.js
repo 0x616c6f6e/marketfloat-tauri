@@ -27,4 +27,13 @@ button.addEventListener('pointercancel', () => {
 });
 
 button.addEventListener('click', event => { if (event.detail === 0) api.orbOpen(); });
-button.addEventListener('contextmenu', event => event.preventDefault());
+document.addEventListener('contextmenu', event => {
+  event.preventDefault();
+  if (gesture) return;
+  if (event.button === 2) {
+    api.orbMenu(event.clientX, event.clientY);
+  } else {
+    const bounds = button.getBoundingClientRect();
+    api.orbMenu(bounds.left, bounds.bottom);
+  }
+});

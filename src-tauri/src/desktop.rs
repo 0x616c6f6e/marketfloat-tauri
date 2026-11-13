@@ -8,11 +8,11 @@ use serde_json::Value;
 use std::time::Duration;
 use std::{path::PathBuf, sync::Mutex};
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::NewWindowResponse,
-    AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, LogicalPosition, Manager, PhysicalPosition, State, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Notify;
@@ -619,6 +619,24 @@ fn orb_down(window: WebviewWindow) -> Result<()> {
 }
 
 #[tauri::command]
+fn orb_menu(window: WebviewWindow, x: f64, y: f64) -> Result<()> {
+    verify(&window, "orb")?;
+    if !x.is_finite() || !y.is_finite() {
+        return Err("菜单位置无效。".into());
+    }
+    let app = window.app_handle();
+    let panel = MenuItem::with_id(app, "panel", "展开看板", true, None::<&str>).map_err(failure)?;
+    let hide = MenuItem::with_id(app, "hide", "隐藏到托盘", true, None::<&str>).map_err(failure)?;
+    let separator = PredefinedMenuItem::separator(app).map_err(failure)?;
+    let quit =
+        MenuItem::with_id(app, "quit", "退出浮窗看盘", true, None::<&str>).map_err(failure)?;
+    let menu = Menu::with_items(app, &[&panel, &hide, &separator, &quit]).map_err(failure)?;
+    window
+        .popup_menu_at(&menu, LogicalPosition::new(x, y))
+        .map_err(failure)
+}
+
+#[tauri::command]
 fn orb_move(window: WebviewWindow, dx: f64, dy: f64) -> Result<()> {
     verify(&window, "orb")?;
     if !dx.is_finite() || !dy.is_finite() {
@@ -674,6 +692,7 @@ pub fn run() {
             show_orb,
             show_panel,
             hide,
+            orb_menu,
             orb_down,
             orb_move,
             orb_up
@@ -720,21 +739,6 @@ pub fn run() {
                 .tooltip("浮窗看盘 · Tauri")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| {
-                    let result = match event.id.as_ref() {
-                        "panel" => show(app, Some("panel")),
-                        "orb" => show(app, Some("orb")),
-                        "hide" => show(app, None),
-                        "quit" => {
-                            app.exit(0);
-                            return;
-                        }
-                        _ => return,
-                    };
-                    if let Err(error) = result {
-                        eprintln!("{error}");
-                    }
-                })
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
@@ -753,6 +757,21 @@ pub fn run() {
             tray.build(app)?;
             tauri::async_runtime::spawn(refresh_loop(app.handle().clone()));
             Ok(())
+        })
+        .on_menu_event(|app, event| {
+            let result = match event.id.as_ref() {
+                "panel" => show(app, Some("panel")),
+                "orb" => show(app, Some("orb")),
+                "hide" => show(app, None),
+                "quit" => {
+                    app.exit(0);
+                    return;
+                }
+                _ => return,
+            };
+            if let Err(error) = result {
+                eprintln!("{error}");
+            }
         })
         .on_window_event(|window, event| {
             if window.label().starts_with("chart-")
