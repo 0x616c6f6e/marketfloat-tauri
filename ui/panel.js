@@ -4,11 +4,14 @@ const marketNames = { cn: 'A 股', us: '美股', crypto: '加密货币', perp: '
 const examples = { cn: '例如 600519、SH000001、BJ920002', us: '例如 AAPL、BRK.B、SPY', crypto: '例如 BTC-USDT、ETH-USD', perp: '例如 NVDAUSDT.P、BTCUSDT.P' };
 const timeFormat = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 const decimal = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const signed = new Intl.NumberFormat('en-US', { signDisplay: 'exceptZero', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const rows = new Map();
 const filters = [...document.querySelectorAll('[data-market]')];
 const list = $('#watchlist');
 const dialog = $('#add-dialog');
-let state, filter = 'all';
+const positionDialog = $('#position-dialog');
+const quoteMenu = $('#quote-menu');
+let state, filter = 'all', positionKey, menuKey, alertTimer;
 
 function priceText(value) {
   if (value >= 1) return decimal.format(value);
@@ -60,7 +63,21 @@ function updateRow(row, item) {
   const change = row.querySelector('.change');
   change.className = 'change ' + direction;
   change.textContent = Number.isFinite(pct) ? (pct > 0 ? '+' : '') + pct.toFixed(2) + '%' : '—';
-  row.querySelector('.row-menu').setAttribute('aria-label', '移出自选：' + name);
+  const positionButton = row.querySelector('.position-return');
+  positionButton.hidden = !item.position;
+  if (item.position) {
+    const roi = item.positionMetrics?.roi;
+    const pnl = item.positionMetrics?.pnl;
+    const side = item.position.side === 'long' ? '多仓' : '空仓';
+    const result = Number.isFinite(roi) ? signed.format(roi) + '%' : '—';
+    positionButton.textContent = side + ' ' + result;
+    positionButton.className = 'position-return' + (!roi || item.cached ? '' : roi > 0 ? ' rise' : ' fall');
+    positionButton.title = side + '估算收益率 ' + result +
+      (Number.isFinite(pnl) ? ' · 浮动盈亏 ' + signed.format(pnl) + ' ' + item.currency : '') +
+      (item.cached ? ' · 缓存报价' : '');
+    positionButton.setAttribute('aria-label', positionButton.title + '，编辑合约仓位');
+  }
+  row.querySelector('.row-menu').setAttribute('aria-label', name + '选项');
   row.setAttribute('aria-label', name + ' ' + displayCode + ' · ' + price + ' ' + item.currency + ' · 按 Enter 打开 TradingView');
   sparkline(row.querySelector('canvas'), item.samples ?? [], direction);
 }
@@ -81,11 +98,15 @@ function render() {
     let row = rows.get(item.key);
     if (!row) {
       row = $('#row-template').content.firstElementChild.cloneNode(true);
-      row.querySelector('.row-menu').addEventListener('click', async () => {
-        if (!window.confirm('移出自选：' + item.code + '？')) return;
-        try { await api.remove(item.key); }
-        catch (error) { $('#status').textContent = String(error); }
+      row.addEventListener('contextmenu', event => {
+        event.preventDefault();
+        openQuoteMenu(item.key, event.clientX, event.clientY);
       });
+      row.querySelector('.row-menu').addEventListener('click', event => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        openQuoteMenu(item.key, rect.right, rect.bottom);
+      });
+      row.querySelector('.position-return').addEventListener('click', () => showPosition(item.key));
       row.dataset.key = item.key;
       window.chartPreview.attach(row, () => ({ item: state.items.find(entry => entry.key === item.key), redUp: true }));
       rows.set(item.key, row);
@@ -133,6 +154,38 @@ function chooseMarket(value) {
   render();
 }
 
+function openQuoteMenu(key, x, y) {
+  const item = state.items.find(item => item.key === key);
+  if (!item) return;
+  window.chartPreview.hide();
+  menuKey = key;
+  quoteMenu.querySelector('[data-quote-action="position"]').textContent =
+    item.position ? '编辑合约仓位' : '录入合约仓位';
+  if (!quoteMenu.matches(':popover-open')) quoteMenu.showPopover();
+  const rect = quoteMenu.getBoundingClientRect();
+  quoteMenu.style.left = Math.max(8, Math.min(x, innerWidth - rect.width - 8)) + 'px';
+  quoteMenu.style.top = Math.max(8, Math.min(y, innerHeight - rect.height - 8)) + 'px';
+  quoteMenu.querySelector('button').focus();
+}
+
+quoteMenu.addEventListener('click', async event => {
+  const operation = event.target.closest('[data-quote-action]')?.dataset.quoteAction;
+  if (!operation) return;
+  quoteMenu.hidePopover();
+  const item = state.items.find(item => item.key === menuKey);
+  if (!item) return;
+  if (operation === 'chart') api.openChart(item.key);
+  else if (operation === 'monitor') window.marketFloatSettings.open('monitor', item.key);
+  else if (operation === 'position') showPosition(item.key);
+  else {
+    const linked = [item.position && '仓位', state.monitors.some(rule => rule.key === item.key) && '价格提醒']
+      .filter(Boolean).join('和');
+    if (!window.confirm('移出自选：' + item.code + (linked ? '，同时删除' + linked : '') + '？')) return;
+    try { await api.remove(item.key); }
+    catch (error) { $('#status').textContent = String(error); }
+  }
+});
+
 function hint() {
   $('#add-hint').classList.remove('error');
   $('#add-hint').textContent = examples[$('#new-market').value];
@@ -147,6 +200,48 @@ function showAdd() {
   hint();
   dialog.showModal();
   $('#new-code').focus();
+}
+
+function showPosition(key) {
+  const item = state?.items.find(entry => entry.key === key);
+  if (!item || document.querySelector('dialog[open]')) return;
+  window.chartPreview.hide();
+  positionKey = key;
+  $('#position-symbol').textContent = item.code;
+  $('#position-currency').textContent = '(' + item.currency + ')';
+  const base = item.base ?? (item.market === 'crypto' ? item.code.split('-')[0] : '');
+  $('#position-quantity-unit').textContent = base ? '(' + base + ')' : '';
+  $('#position-side').value = item.position?.side ?? 'long';
+  $('#position-entry').value = item.position?.entryPrice ?? '';
+  $('#position-quantity').value = item.position?.quantity ?? '';
+  $('#position-leverage').value = item.position?.leverage ?? 1;
+  $('#position-remove').hidden = !item.position;
+  $('#position-error').hidden = true;
+  positionDialog.showModal();
+  $('#position-entry').focus();
+}
+
+async function savePosition(input) {
+  const save = $('#position-save');
+  const remove = $('#position-remove');
+  if (save.disabled) return;
+  save.disabled = remove.disabled = true;
+  const error = $('#position-error');
+  error.hidden = true;
+  try {
+    if (input && (!Number.isFinite(input.entryPrice) || input.entryPrice <= 0 ||
+        !Number.isFinite(input.quantity) || input.quantity <= 0 ||
+        !Number.isFinite(input.leverage) || input.leverage < 1)) {
+      throw new Error('请填写大于零的开仓价和数量，杠杆至少为 1 倍。');
+    }
+    await api.savePosition(positionKey, input);
+    positionDialog.close();
+  } catch (failure) {
+    error.textContent = String(failure);
+    error.hidden = false;
+  } finally {
+    save.disabled = remove.disabled = false;
+  }
 }
 
 for (const button of filters) button.addEventListener('click', () => chooseMarket(button.dataset.market));
@@ -169,6 +264,15 @@ $('#add-form').addEventListener('submit', async event => {
     $('#new-code').focus();
   } finally { submit.disabled = false; }
 });
+$('#position-cancel').addEventListener('click', () => positionDialog.close());
+$('#position-remove').addEventListener('click', () => void savePosition(null));
+$('#position-form').addEventListener('submit', event => {
+  event.preventDefault();
+  void savePosition({
+    side: $('#position-side').value, entryPrice: $('#position-entry').valueAsNumber,
+    quantity: $('#position-quantity').valueAsNumber, leverage: $('#position-leverage').valueAsNumber,
+  });
+});
 $('#collapse').addEventListener('click', api.collapse);
 $('#hide').addEventListener('click', api.hide);
 $('#refresh').addEventListener('click', api.refresh);
@@ -176,6 +280,7 @@ document.addEventListener('keydown', event => {
   if (event.key === 'F5') { event.preventDefault(); api.refresh(); }
   if (document.querySelector('dialog[open]')) return;
   if (event.key === 'Escape') {
+    if (quoteMenu.matches(':popover-open')) return;
     if (window.chartPreview.hide()) return;
     if (!$('#settings-page').hidden) window.marketFloatSettings.close(true);
     else api.collapse();
@@ -185,3 +290,10 @@ document.addEventListener('keydown', event => {
 api.subscribe(setState).then(() => api.snapshot()).then(setState).catch(error => {
   $('#status').textContent = String(error);
 });
+api.onAlert(message => {
+  const alert = $('#price-alert');
+  alert.textContent = message;
+  alert.hidden = false;
+  clearTimeout(alertTimer);
+  alertTimer = setTimeout(() => { alert.hidden = true; }, 9000);
+}).catch(error => { $('#status').textContent = String(error); });

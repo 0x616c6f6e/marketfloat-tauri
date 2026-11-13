@@ -150,7 +150,7 @@ impl Instrument {
         }
     }
 
-    fn base(&self) -> &str {
+    pub fn base(&self) -> &str {
         match self.market {
             Market::Perp => self.code.trim_end_matches("USDT.P"),
             Market::Crypto => self.code.split('-').next().unwrap_or(&self.code),

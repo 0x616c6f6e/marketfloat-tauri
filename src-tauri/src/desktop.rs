@@ -1,6 +1,7 @@
 use crate::{
     market::{self, History, Instrument, Market, Quote, Source, SourceGroup},
     market_state::MarketData,
+    portfolio::{self, Alert, Monitor, MonitorAction, MonitorInput, Position, MAX_MONITORS},
     settings::{self, Period, Proxy, Settings},
 };
 use serde_json::Value;
@@ -13,7 +14,9 @@ use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Notify;
+use uuid::Uuid;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -128,18 +131,42 @@ async fn refresh_loop(app: AppHandle) {
         let started = tokio::time::Instant::now();
         let _ = publish(&app);
         let results = market::quotes(&client, &settings.watchlist, &settings.sources).await;
+        let mut alerts = Vec::new();
         {
+            let Ok(mut current) = desktop.settings.lock() else {
+                return;
+            };
             let Ok(mut data) = desktop.data.lock() else {
                 return;
             };
             if data.revision == revision {
+                let mut monitors_changed = false;
+                let Settings {
+                    watchlist,
+                    monitors,
+                    ..
+                } = &mut *current;
                 for (key, result) in results {
+                    if let (Ok(quote), Some(item)) =
+                        (&result, watchlist.iter().find(|item| item.key() == key))
+                    {
+                        monitors_changed |=
+                            portfolio::evaluate(monitors, item, &key, quote, &mut alerts);
+                    }
                     data.update(key, result);
+                }
+                if monitors_changed {
+                    if let Err(error) = settings::save(&desktop.file, &current) {
+                        eprintln!("无法保存提醒状态：{error}");
+                    }
                 }
             }
             data.set_refreshing(false);
         }
         let _ = publish(&app);
+        if !alerts.is_empty() {
+            announce_alerts(&app, &alerts);
+        }
         let wait = (started + Duration::from_secs(settings.interval))
             .saturating_duration_since(tokio::time::Instant::now())
             .max(Duration::from_millis(250));
@@ -148,6 +175,111 @@ async fn refresh_loop(app: AppHandle) {
             _ = tokio::time::sleep(wait) => {}
         }
     }
+}
+
+fn announce_alerts(app: &AppHandle, alerts: &[Alert]) {
+    let mut lines: Vec<_> = alerts.iter().take(3).map(Alert::message).collect();
+    if alerts.len() > lines.len() {
+        lines.push(format!("另有 {} 条提醒", alerts.len() - lines.len()));
+    }
+    let body = lines.join("\n");
+    if let Err(error) = app
+        .notification()
+        .builder()
+        .title("浮窗看盘 · 价格提醒")
+        .body(&body)
+        .show()
+    {
+        eprintln!("无法发送系统价格提醒：{error}");
+    }
+    let _ = app.emit_to("panel", "marketfloat-alert", body);
+}
+
+#[tauri::command]
+fn save_position(window: WebviewWindow, key: String, position: Option<Position>) -> Result<()> {
+    verify(&window, "panel")?;
+    if let Some(position) = &position {
+        position.validate()?;
+    }
+    edit_market(
+        window.app_handle(),
+        |settings| {
+            find_item(settings, &key)?;
+            if let Some(position) = position {
+                settings.positions.insert(key, position);
+            } else {
+                settings.positions.remove(&key);
+            }
+            Ok(())
+        },
+        |_, _| {},
+    )
+}
+
+#[tauri::command]
+fn save_monitor(window: WebviewWindow, input: MonitorInput) -> Result<()> {
+    verify(&window, "panel")?;
+    input.condition.validate()?;
+    edit_market(
+        window.app_handle(),
+        |settings| {
+            find_item(settings, &input.condition.key)?;
+            if settings
+                .monitors
+                .iter()
+                .any(|monitor| Some(monitor.id) != input.id && monitor.condition == input.condition)
+            {
+                return Err("已存在相同的提醒规则。".into());
+            }
+            if let Some(id) = input.id {
+                let monitor = settings
+                    .monitors
+                    .iter_mut()
+                    .find(|monitor| monitor.id == id)
+                    .ok_or("此规则已不存在。")?;
+                monitor.set_condition(input.condition);
+            } else {
+                if settings.monitors.len() >= MAX_MONITORS {
+                    return Err("最多可添加 100 条提醒规则。".into());
+                }
+                settings.monitors.push(Monitor::new(input.condition));
+            }
+            Ok(())
+        },
+        |_, _| {},
+    )?;
+    window.state::<Desktop>().refresh.notify_one();
+    Ok(())
+}
+
+#[tauri::command]
+fn update_monitor(window: WebviewWindow, id: Uuid, action: MonitorAction) -> Result<()> {
+    verify(&window, "panel")?;
+    let enable = matches!(action, MonitorAction::Enable);
+    edit_market(
+        window.app_handle(),
+        |settings| {
+            let index = settings
+                .monitors
+                .iter()
+                .position(|monitor| monitor.id == id)
+                .ok_or("此规则已不存在。")?;
+            match action {
+                MonitorAction::Enable | MonitorAction::Disable => {
+                    settings.monitors[index].set_enabled(enable)
+                }
+                MonitorAction::Remove => {
+                    settings.monitors.remove(index);
+                }
+            }
+            Ok(())
+        },
+        |_, _| {},
+    )?;
+    if enable {
+        window.state::<Desktop>().refresh.notify_one();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -206,6 +338,10 @@ async fn remove_item(window: WebviewWindow, key: String) -> Result<()> {
         |settings| {
             find_item(settings, &key)?;
             settings.watchlist.retain(|item| item.key() != key);
+            settings.positions.remove(&key);
+            settings
+                .monitors
+                .retain(|monitor| monitor.condition.key != key);
             Ok(())
         },
         |data, _| {
@@ -518,8 +654,12 @@ fn orb_up(window: WebviewWindow, moved: bool) -> Result<()> {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             snapshot,
+            save_position,
+            save_monitor,
+            update_monitor,
             refresh_quotes,
             chart_preview,
             save_source,

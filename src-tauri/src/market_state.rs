@@ -101,17 +101,22 @@ impl MarketData {
             let row = self.rows.get(&key);
             let quote = row.and_then(|row| row.quote.as_ref());
             let error = row.and_then(|row| row.error.as_ref());
+            let position = settings.positions.get(&key);
+            let position_metrics = position.zip(quote).map(|(position, quote)| position.metrics(quote.price));
             json!({
                 "key": key,
                 "market": item.market,
                 "code": item.code,
                 "name": item.name,
                 "currency": item.currency(),
+                "base": matches!(item.market, market::Market::Crypto | market::Market::Perp).then(|| item.base()),
                 "source": if settings.sources.contains_key(&item.group()) { "自定义行情源" } else { item.source() },
                 "quote": quote,
                 "samples": row.map(|row| &row.samples),
                 "cached": quote.is_some() && error.is_some(),
                 "error": error,
+                "position": position,
+                "positionMetrics": position_metrics,
             })
         }).collect();
         json!({
@@ -119,6 +124,7 @@ impl MarketData {
             "pinned": settings.pinned,
             "proxy": settings.proxy,
             "sources": settings.sources,
+            "monitors": settings.monitors,
             "interval": settings.interval,
             "chartPeriod": settings.selected_period.unwrap_or(Period::Day),
             "refreshing": self.refreshing,

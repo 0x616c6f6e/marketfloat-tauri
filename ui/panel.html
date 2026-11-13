@@ -44,8 +44,9 @@
         <div class="pricing"><strong class="price"></strong><span class="currency"></span></div>
         <div class="quote-moves">
           <div class="change"></div>
+          <button class="position-return" type="button" hidden></button>
         </div>
-        <button type="button" class="row-menu" aria-label="移出自选">×</button>
+        <button type="button" class="row-menu" aria-label="标的选项">⋯</button>
       </li>
     </template>
   </main>
@@ -82,6 +83,7 @@
     </div>
     <nav class="filters settings-tabs" aria-label="设置分类">
       <button type="button" data-setting-tab="source" aria-pressed="true">行情来源</button>
+      <button type="button" data-setting-tab="monitor" aria-pressed="false">价格监控</button>
       <button type="button" data-setting-tab="proxy" aria-pressed="false">网络代理</button>
       <button type="button" data-setting-tab="general" aria-pressed="false">常规</button>
     </nav>
@@ -124,6 +126,34 @@
           </div>
           <p id="source-status" class="setting-message" role="status"></p>
         </form>
+      </section>
+      <section id="settings-monitor" aria-label="价格监控" hidden>
+        <p class="setting-copy monitor-copy">到达目标价时发送系统通知。价格离开条件后，再次达到会重新提醒。收起面板后继续监控。</p>
+        <form id="monitor-form" class="settings-form" novalidate>
+          <label>自选标的<select id="monitor-symbol"></select></label>
+          <div class="form-pair">
+            <label>条件<select id="monitor-direction"><option value="above">大于或等于</option><option value="below">小于或等于</option></select></label>
+            <label>目标价 <span id="monitor-currency"></span><input id="monitor-threshold" type="number" inputmode="decimal" step="any" placeholder="例如 150"></label>
+          </div>
+          <div class="setting-actions">
+            <button id="monitor-cancel" class="secondary" type="button" hidden>取消编辑</button>
+            <button id="monitor-submit" class="primary" type="submit">添加提醒</button>
+          </div>
+          <p id="monitor-status" class="setting-message" role="status"></p>
+        </form>
+        <div class="monitor-heading"><h2>提醒规则</h2><span id="monitor-count"></span></div>
+        <ul id="monitor-list" class="monitor-list"></ul>
+        <template id="monitor-row">
+          <li class="monitor-row">
+            <div class="rule-heading"><strong class="rule-name"></strong><span class="rule-status"></span></div>
+            <span class="rule-trigger"></span>
+            <div class="rule-actions">
+              <button type="button" data-rule-action="edit">编辑</button>
+              <button type="button" data-rule-action="toggle"></button>
+              <button type="button" data-rule-action="remove">删除</button>
+            </div>
+          </li>
+        </template>
       </section>
       <section id="settings-proxy" aria-label="网络代理" hidden>
         <form id="proxy-form" class="settings-form" novalidate>
@@ -172,5 +202,31 @@
       <div class="dialog-actions"><button id="add-cancel" type="button">取消</button><button class="primary" type="submit">添加</button></div>
     </form>
   </dialog>
+  <dialog id="position-dialog" aria-labelledby="position-title">
+    <form id="position-form" class="settings-form">
+      <h2 id="position-title">合约仓位</h2>
+      <p id="position-symbol"></p>
+      <div class="form-pair">
+        <label>方向<select id="position-side"><option value="long">做多</option><option value="short">做空</option></select></label>
+        <label>杠杆倍数<input id="position-leverage" type="number" min="1" step="any" required></label>
+      </div>
+      <label>开仓价 <span id="position-currency"></span><input id="position-entry" type="number" step="any" required></label>
+      <label>标的数量 <span id="position-quantity-unit"></span><input id="position-quantity" type="number" step="any" required></label>
+      <p class="hint">按线性合约和看板报价估算浮动收益，未计手续费与资金费。</p>
+      <p id="position-error" class="hint error" role="status" hidden></p>
+      <div class="dialog-actions">
+        <button id="position-remove" type="button" hidden>移除仓位</button>
+        <button id="position-cancel" type="button">取消</button>
+        <button id="position-save" class="primary" type="submit">保存仓位</button>
+      </div>
+    </form>
+  </dialog>
+  <div id="quote-menu" class="quote-menu" popover>
+    <button type="button" data-quote-action="chart">打开 TradingView 图表</button>
+    <button type="button" data-quote-action="monitor">设置价格监控</button>
+    <button type="button" data-quote-action="position">录入合约仓位</button>
+    <button type="button" data-quote-action="remove">移出自选</button>
+  </div>
+  <p id="price-alert" class="price-alert" role="status" hidden></p>
 </body>
 </html>

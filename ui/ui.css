@@ -257,6 +257,18 @@ dialog p { margin: 0; line-height: 1.6; }
 .dialog-actions .primary { background: var(--accent); color: #112623; border-color: transparent; }
 #position-symbol { color: var(--text); font-weight: 650; }
 #position-remove { margin-right: auto; color: var(--warn); }
+.quote-menu {
+  position: fixed; inset: auto; margin: 0; padding: 4px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text);
+}
+.quote-menu:popover-open { display: grid; }
+.quote-menu button { text-align: left; padding: 7px 10px; border: 0; border-radius: 4px; background: transparent; color: inherit; }
+.quote-menu button:hover, .quote-menu button:focus-visible { background: var(--raised); }
+.price-alert {
+  position: fixed; inset: auto 12px 48px; z-index: 20; margin: 0; padding: 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: #182838;
+  color: var(--text); white-space: pre-line; pointer-events: none;
+}
 .orb-page { display: grid; place-items: center; background: transparent; overflow: hidden; user-select: none; }
 #orb {
   width: 54px;

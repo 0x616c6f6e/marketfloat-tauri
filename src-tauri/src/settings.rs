@@ -1,4 +1,5 @@
 use crate::market::{self, Instrument, Source, SourceGroup};
+use crate::portfolio::{Monitor, Position, MAX_MONITORS};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -88,6 +89,8 @@ pub struct Settings {
     pub pinned: bool,
     pub watchlist: Vec<Instrument>,
     pub sources: HashMap<SourceGroup, Source>,
+    pub monitors: Vec<Monitor>,
+    pub positions: HashMap<String, Position>,
     pub interval: u64,
 }
 
@@ -102,6 +105,8 @@ impl Default for Settings {
             pinned: true,
             watchlist: market::defaults(),
             sources: HashMap::new(),
+            monitors: Vec::new(),
+            positions: HashMap::new(),
             interval: 30,
         }
     }
@@ -126,6 +131,17 @@ pub fn load(file: &Path) -> Settings {
     settings
         .sources
         .retain(|_, source| source.validate().is_ok());
+    let keys: HashSet<_> = settings.watchlist.iter().map(Instrument::key).collect();
+    settings
+        .positions
+        .retain(|key, position| keys.contains(key) && position.validate().is_ok());
+    let mut monitor_ids = HashSet::new();
+    settings.monitors.retain(|monitor| {
+        keys.contains(&monitor.condition.key)
+            && monitor.condition.validate().is_ok()
+            && monitor_ids.insert(monitor.id)
+    });
+    settings.monitors.truncate(MAX_MONITORS);
     if !INTERVALS.contains(&settings.interval) {
         settings.interval = 30;
     }

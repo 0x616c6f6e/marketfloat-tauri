@@ -3,6 +3,7 @@
 mod desktop;
 mod market;
 mod market_state;
+mod portfolio;
 mod settings;
 
 fn main() {
