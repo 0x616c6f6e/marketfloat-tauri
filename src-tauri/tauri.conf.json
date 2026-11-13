@@ -1,0 +1,27 @@
+{
+  "productName": "MarketFloat Tauri",
+  "version": "0.1.0",
+  "identifier": "com.marketfloat.tauri",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src ipc: http://ipc.localhost",
+      "capabilities": [
+        "marketfloat"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ]
+  }
+}

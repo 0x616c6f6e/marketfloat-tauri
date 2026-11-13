@@ -1,0 +1,12 @@
+{
+  "identifier": "marketfloat",
+  "description": "Event subscriptions for local MarketFloat windows",
+  "windows": [
+    "panel",
+    "orb"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}
