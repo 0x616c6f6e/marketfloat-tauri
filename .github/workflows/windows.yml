@@ -1,0 +1,137 @@
+name: Windows CI and release
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Test and package Windows x64
+    runs-on: windows-2025
+    timeout-minutes: 35
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      TAURI_CLI_VERSION: '2.12.4'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Set up Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable
+      - name: Check package and tag versions
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $cargo = cargo metadata --locked --no-deps --format-version 1 --manifest-path src-tauri/Cargo.toml | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $crate = $cargo.packages | Where-Object name -eq 'marketfloat-tauri'
+          if ($version -notmatch '^\d+\.\d+\.\d+$' -or $crate.version -cne $version) {
+            throw 'Cargo.toml and tauri.conf.json must have the same stable version.'
+          }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -cne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME must match v$version."
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Check formatting and test
+        shell: pwsh
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem ui -Recurse -Filter '*.js' -File | ForEach-Object {
+            node --check $_.FullName
+            if ($LASTEXITCODE -ne 0) { throw "JavaScript syntax check failed: $($_.Name)" }
+          }
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+      - name: Build NSIS and MSI installers
+        shell: pwsh
+        run: |
+          $config = Join-Path $env:RUNNER_TEMP 'marketfloat-bundle.json'
+          Set-Content -LiteralPath $config -Encoding utf8NoBOM -Value '{"bundle":{"useLocalToolsDir":true}}'
+          npx --yes --package "@tauri-apps/cli@$env:TAURI_CLI_VERSION" tauri build --ci --config $config --target x86_64-pc-windows-msvc --bundles nsis,msi -- --locked
+      - name: Prepare installers, portable ZIP and SHA-256 checksums
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $release = 'src-tauri/target/x86_64-pc-windows-msvc/release'
+          $bundle = "$release/bundle"
+          $nsis = @(Get-ChildItem "$bundle/nsis" -Filter '*_x64-setup.exe' -File)
+          $msi = @(Get-ChildItem "$bundle/msi" -Filter '*_x64_*.msi' -File)
+          if ($nsis.Count -ne 1 -or $msi.Count -ne 1) {
+            throw 'Expected one x64 NSIS installer and one x64 MSI installer.'
+          }
+          $dist = New-Item -ItemType Directory -Path 'release-files'
+          $prefix = "MarketFloat-Tauri-${env:VERSION}-x64"
+          $portable = & ./scripts/Pack-Portable.ps1 -BinaryPath "$release/marketfloat-tauri.exe" -OutputDirectory $dist.FullName
+          $files = "$prefix-setup.exe", "$prefix.msi", (Split-Path -Leaf $portable)
+          Copy-Item -LiteralPath $nsis[0].FullName -Destination (Join-Path $dist.FullName $files[0])
+          Copy-Item -LiteralPath $msi[0].FullName -Destination (Join-Path $dist.FullName $files[1])
+          $hashes = foreach ($file in $files) {
+            $hash = Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $dist.FullName $file)
+            "$($hash.Hash.ToLowerInvariant())  $file"
+          }
+          [IO.File]::WriteAllText((Join-Path $dist.FullName 'SHA256SUMS.txt'), ($hashes -join [char]10) + [char]10)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: MarketFloat-Tauri-windows-x64
+          path: release-files/
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: windows
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: MarketFloat-Tauri-windows-x64
+          path: release-files
+      - name: Verify and publish release assets
+        shell: bash
+        working-directory: release-files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.windows.outputs.version }}
+        run: |
+          prefix="MarketFloat-Tauri-${VERSION}-x64"
+          assets=("$prefix-setup.exe" "$prefix.msi" "$prefix-portable.zip" SHA256SUMS.txt)
+          sha256sum --strict --check SHA256SUMS.txt
+          for asset in "${assets[@]}"; do
+            test -f "$asset"
+          done
+          if release=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets); then
+            if jq -e '.isDraft' <<< "$release" >/dev/null; then
+              gh release upload "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+            else
+              jq -e --args '($ARGS.positional - [.assets[].name] | length) == 0' "${assets[@]}" \
+                <<< "$release" >/dev/null
+              echo "Release $TAG already has all assets."
+            fi
+          else
+            gh release create "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+          fi

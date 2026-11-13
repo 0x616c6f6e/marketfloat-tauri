@@ -11,6 +11,30 @@ cargo run --locked --manifest-path src-tauri/Cargo.toml
 cargo test --locked --manifest-path src-tauri/Cargo.toml
 ```
 
+## GitHub CI/CD
+
+[Windows 工作流](.github/workflows/windows.yml)在分支推送、Pull Request 和手动运行时检查 Rust 格式、执行 Rust 测试、检查前端脚本语法，并构建 Windows x64 的 NSIS `setup.exe`、MSI 和免安装 ZIP。产物和 `SHA256SUMS.txt` 可在 **Actions → 对应运行 → Artifacts** 下载。
+
+### 免安装版
+
+解压 `MarketFloat-Tauri-<版本>-x64-portable.zip`，双击 `MarketFloat-Tauri.exe`。运行需要系统已有 Edge WebView2 Runtime。设置仍保存在当前 Windows 用户的应用数据目录。需要 Windows 原生价格通知时请使用安装版，免安装版可在看板内查看提醒和触发记录。
+
+也可在 PowerShell 7 中从现有 x64 release 可执行文件生成 ZIP：
+
+```powershell
+./scripts/Pack-Portable.ps1 -BinaryPath src-tauri/target/x86_64-pc-windows-msvc/release/marketfloat-tauri.exe -OutputDirectory release-files
+```
+
+### 发布
+
+将此仓库推送到 GitHub 后，推送与 `src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 版本一致的标签，即可自动发布到 **Releases**。发布任务使用 GitHub 提供的 `GITHUB_TOKEN`。
+
+```powershell
+git push -u origin main
+git tag v0.1.0
+git push origin v0.1.0
+```
+
 ## 验收步骤
 
 1. 点击标题栏的收起按钮显示透明悬浮球。拖动球后再点击，恢复看板。
