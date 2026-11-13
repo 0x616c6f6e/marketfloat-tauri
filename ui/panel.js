@@ -10,8 +10,9 @@ const filters = [...document.querySelectorAll('[data-market]')];
 const list = $('#watchlist');
 const dialog = $('#add-dialog');
 const positionDialog = $('#position-dialog');
+const removeDialog = $('#remove-dialog');
 const quoteMenu = $('#quote-menu');
-let state, filter = 'all', positionKey, menuKey, alertTimer;
+let state, filter = 'all', positionKey, menuKey, removeKey, alertTimer;
 
 function priceText(value) {
   if (value >= 1) return decimal.format(value);
@@ -168,7 +169,7 @@ function openQuoteMenu(key, x, y) {
   quoteMenu.querySelector('button').focus();
 }
 
-quoteMenu.addEventListener('click', async event => {
+quoteMenu.addEventListener('click', event => {
   const operation = event.target.closest('[data-quote-action]')?.dataset.quoteAction;
   if (!operation) return;
   quoteMenu.hidePopover();
@@ -177,12 +178,47 @@ quoteMenu.addEventListener('click', async event => {
   if (operation === 'chart') api.openChart(item.key);
   else if (operation === 'monitor') window.marketFloatSettings.open('monitor', item.key);
   else if (operation === 'position') showPosition(item.key);
-  else {
-    const linked = [item.position && '仓位', state.monitors.some(rule => rule.key === item.key) && '价格提醒']
-      .filter(Boolean).join('和');
-    if (!window.confirm('移出自选：' + item.code + (linked ? '，同时删除' + linked : '') + '？')) return;
-    try { await api.remove(item.key); }
-    catch (error) { $('#status').textContent = String(error); }
+  else if (operation === 'remove') showRemove(item);
+});
+
+function showRemove(item) {
+  if (document.querySelector('dialog[open]')) return;
+  const linked = [item.position && '仓位', state.monitors.some(rule => rule.key === item.key) && '价格提醒']
+    .filter(Boolean).join('和');
+  removeKey = item.key;
+  $('#remove-description').textContent = '将 ' + item.code + ' 移出自选？' +
+    (linked ? '关联的' + linked + '也会删除。' : '');
+  $('#remove-error').hidden = true;
+  removeDialog.showModal();
+}
+
+$('#remove-cancel').addEventListener('click', () => removeDialog.close());
+removeDialog.addEventListener('cancel', event => {
+  if ($('#remove-confirm').disabled) event.preventDefault();
+});
+removeDialog.addEventListener('close', () => {
+  if (removeDialog.open) return;
+  const trigger = rows.get(removeKey)?.querySelector('.row-menu') ?? $('#add');
+  removeKey = undefined;
+  trigger.focus();
+});
+$('#remove-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const confirm = $('#remove-confirm');
+  const cancel = $('#remove-cancel');
+  if (!removeDialog.open || confirm.disabled) return;
+  confirm.disabled = cancel.disabled = true;
+  const error = $('#remove-error');
+  error.hidden = true;
+  try {
+    await api.remove(removeKey);
+    removeDialog.close();
+  } catch (failure) {
+    error.textContent = String(failure);
+    error.hidden = false;
+  } finally {
+    confirm.disabled = cancel.disabled = false;
+    if (removeDialog.open) cancel.focus();
   }
 });
 

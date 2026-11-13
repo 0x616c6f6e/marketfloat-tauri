@@ -255,6 +255,7 @@ dialog p { margin: 0; line-height: 1.6; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 5px; }
 .dialog-actions button { min-width: 66px; }
 .dialog-actions .primary { background: var(--accent); color: #112623; border-color: transparent; }
+.dialog-actions .danger { background: #612f42; border-color: #9b4e67; color: #fff0f4; }
 #position-symbol { color: var(--text); font-weight: 650; }
 #position-remove { margin-right: auto; color: var(--warn); }
 .quote-menu {
