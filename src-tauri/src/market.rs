@@ -368,6 +368,10 @@ async fn response(request: reqwest::RequestBuilder) -> Result<reqwest::Response,
         let code = response.status().as_u16();
         return Err(match code {
             400 | 404 => "行情源无此代码".into(),
+            451 => {
+                "行情源因法律或地区限制拒绝访问（HTTP 451）；请使用所在地可访问且符合服务条款的数据源。"
+                    .into()
+            }
             _ => format!("行情源暂不可用（HTTP {code}）"),
         });
     }
