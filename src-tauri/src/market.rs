@@ -42,6 +42,46 @@ pub enum SourceGroup {
     Perp,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QuoteProvider {
+    #[default]
+    Builtin,
+    Binance,
+    Gate,
+    Okx,
+}
+
+impl QuoteProvider {
+    pub fn label(self, group: SourceGroup) -> &'static str {
+        match self {
+            Self::Builtin => match group {
+                SourceGroup::Cn | SourceGroup::Us => "腾讯财经",
+                SourceGroup::Usd => "Coinbase",
+                SourceGroup::Usdt => "Binance",
+                SourceGroup::Perp => "Binance 永续",
+            },
+            Self::Binance => match group {
+                SourceGroup::Perp => "Binance 永续",
+                _ => "Binance",
+            },
+            Self::Gate => match group {
+                SourceGroup::Perp => "Gate 永续",
+                _ => "Gate.io",
+            },
+            Self::Okx => match group {
+                SourceGroup::Perp => "OKX 永续",
+                _ => "OKX",
+            },
+        }
+    }
+
+    pub fn supports(self, group: SourceGroup) -> bool {
+        matches!(self, Self::Builtin)
+            || matches!(group, SourceGroup::Usdt | SourceGroup::Perp)
+    }
+}
+
 impl SourceGroup {
     pub fn sample(self) -> (Market, &'static str) {
         match self {
@@ -142,12 +182,7 @@ impl Instrument {
     }
 
     pub fn source(&self) -> &'static str {
-        match self.group() {
-            SourceGroup::Cn | SourceGroup::Us => "腾讯财经",
-            SourceGroup::Usd => "Coinbase",
-            SourceGroup::Usdt => "Binance",
-            SourceGroup::Perp => "Binance 永续",
-        }
+        QuoteProvider::Builtin.label(self.group())
     }
 
     pub fn base(&self) -> &str {
@@ -458,6 +493,15 @@ pub async fn single_quote(
     item: &Instrument,
     source: Option<&Source>,
 ) -> Result<Quote, String> {
+    single_quote_with_provider(client, item, source, QuoteProvider::Builtin).await
+}
+
+pub async fn single_quote_with_provider(
+    client: &Client,
+    item: &Instrument,
+    source: Option<&Source>,
+    provider: QuoteProvider,
+) -> Result<Quote, String> {
     if let Some(source) = source {
         let data = json(
             client
@@ -480,6 +524,64 @@ pub async fn single_quote(
             .await?
             .remove(&stock_key(item).to_ascii_lowercase())
             .ok_or_else(|| "行情源未返回报价".into());
+    }
+    if !provider.supports(item.group()) {
+        return Err("此行情市场不支持所选数据源。".into());
+    }
+    if provider == QuoteProvider::Gate {
+        let (url, key, pair) = match item.market {
+            Market::Perp => (
+                "https://api.gateio.ws/api/v4/futures/usdt/tickers",
+                "contract",
+                format!("{}_USDT", item.base()),
+            ),
+            Market::Crypto => (
+                "https://api.gateio.ws/api/v4/spot/tickers",
+                "currency_pair",
+                item.code.replace('-', "_"),
+            ),
+            _ => return Err("Gate.io 仅支持 USDT 现货和永续行情。".into()),
+        };
+        let data = json(client.get(url).query(&[(key, pair)])).await?;
+        let row = data
+            .as_array()
+            .and_then(|rows| rows.first())
+            .ok_or("Gate.io 未返回该交易对报价。")?;
+        let price = numeric(row.get("last"))
+            .filter(|price| *price > 0.0)
+            .ok_or("Gate.io 未返回有效最新价。")?;
+        let change = numeric(row.get("change_percentage"));
+        return Ok(quote(price, change, None, None));
+    }
+    if provider == QuoteProvider::Okx {
+        let inst_id = match item.market {
+            Market::Perp => format!("{}-USDT-SWAP", item.base()),
+            Market::Crypto => item.code.clone(),
+            _ => return Err("OKX 仅支持 USDT 现货和永续行情。".into()),
+        };
+        let data = json(
+            client
+                .get("https://www.okx.com/api/v5/market/ticker")
+                .query(&[("instId", inst_id)]),
+        )
+        .await?;
+        if data.get("code").and_then(Value::as_str) != Some("0") {
+            return Err(data
+                .get("msg")
+                .and_then(Value::as_str)
+                .filter(|message| !message.is_empty())
+                .unwrap_or("OKX 未返回该交易对报价。")
+                .to_owned());
+        }
+        let row = data["data"]
+            .as_array()
+            .and_then(|rows| rows.first())
+            .ok_or("OKX 未返回该交易对报价。")?;
+        let price = numeric(row.get("last"))
+            .filter(|price| *price > 0.0)
+            .ok_or("OKX 未返回有效最新价。")?;
+        let change = percentage(price, numeric(row.get("open24h")));
+        return Ok(quote(price, change, None, None));
     }
     let usdt = item.currency() == "USDT";
     let (url, last, open) = if usdt {
@@ -507,6 +609,7 @@ pub async fn quotes(
     client: &Client,
     items: &[Instrument],
     sources: &HashMap<SourceGroup, Source>,
+    providers: &HashMap<SourceGroup, QuoteProvider>,
 ) -> Vec<(String, Result<Quote, String>)> {
     let (shares, singles): (Vec<_>, Vec<_>) = items.iter().cloned().partition(|item| {
         matches!(item.market, Market::Cn | Market::Us) && !sources.contains_key(&item.group())
@@ -530,7 +633,13 @@ pub async fn quotes(
     };
     let single_jobs = stream::iter(singles)
         .map(|item| async move {
-            let result = single_quote(client, &item, sources.get(&item.group())).await;
+            let result = single_quote_with_provider(
+                client,
+                &item,
+                sources.get(&item.group()),
+                providers.get(&item.group()).copied().unwrap_or_default(),
+            )
+            .await;
             (item.key(), result)
         })
         .buffer_unordered(8)

@@ -3,11 +3,25 @@
   const $ = id => document.getElementById(id);
   const tabs = [...document.querySelectorAll('[data-setting-tab]')];
   const sources = {
-    cn: { example: '600519', description: '腾讯财经 · 涨跌幅相对昨收。' },
-    us: { example: 'AAPL', description: '腾讯财经 · 涨跌幅相对昨收，报价可能延迟。' },
-    usd: { example: 'BTC-USD', description: 'Coinbase · 24 小时涨跌幅。' },
-    usdt: { example: 'BTC-USDT', description: 'Binance · 24 小时涨跌幅。' },
-    perp: { example: 'NVDAUSDT.P', description: 'Binance 永续 · 24 小时涨跌幅。' },
+    cn: { example: '600519', defaultProvider: 'builtin', providers: {
+      builtin: ['腾讯财经', 'A 股报价与昨收涨跌幅。'],
+    } },
+    us: { example: 'AAPL', defaultProvider: 'builtin', providers: {
+      builtin: ['腾讯财经', '美股报价与昨收涨跌幅，报价可能延迟。'],
+    } },
+    usd: { example: 'BTC-USD', defaultProvider: 'builtin', providers: {
+      builtin: ['Coinbase', 'USD 现货及 24 小时涨跌幅。'],
+    } },
+    usdt: { example: 'BTC-USDT', defaultProvider: 'binance', providers: {
+      binance: ['Binance', 'USDT 现货及 24 小时涨跌幅。'],
+      gate: ['Gate.io', 'Gate USDT 现货，公开行情接口。'],
+      okx: ['OKX', 'OKX USDT 现货，公开行情接口。'],
+    } },
+    perp: { example: 'NVDAUSDT.P', defaultProvider: 'binance', providers: {
+      binance: ['Binance 永续', 'Binance USDⓈ-M 永续行情。'],
+      gate: ['Gate 永续', 'Gate USDT 永续，公开行情接口。'],
+      okx: ['OKX 永续', 'OKX USDT 永续，公开行情接口。'],
+    } },
   };
   const fields = ['url', 'price', 'change', 'previous', 'name'];
   const dateFormat = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
@@ -74,19 +88,26 @@
   }
 
   function renderSourceMode() {
+    const group = $('source-group').value;
     const custom = $('source-mode').value === 'custom';
     $('source-custom').hidden = !custom;
     $('source-info').hidden = custom;
-    $('source-info').textContent = sources[$('source-group').value].description;
+    const [name, description] = sources[group].providers[$('source-mode').value] ?? [];
+    $('source-info').textContent = [name, description].filter(Boolean).join(' · ');
   }
 
   function renderSource() {
     const group = $('source-group').value;
     const source = state?.sources[group];
-    const signature = JSON.stringify([group, source]);
+    const provider = state?.providers?.[group] ?? sources[group].defaultProvider;
+    const signature = JSON.stringify([group, source, provider]);
     if (signature === lastSource) return;
     lastSource = signature;
-    $('source-mode').value = source ? 'custom' : 'builtin';
+    const options = Object.entries(sources[group].providers)
+      .map(([value, [label]]) => new Option(label, value));
+    options.push(new Option('自定义 JSON 接口', 'custom'));
+    $('source-mode').replaceChildren(...options);
+    $('source-mode').value = source ? 'custom' : provider;
     fields.forEach(field => { $('source-' + field).value = source?.[field] ?? ''; });
     $('source-test-code').value = '';
     $('source-test-code').placeholder = sources[group].example;
@@ -94,8 +115,14 @@
   }
 
   function sourceInput() {
-    if ($('source-mode').value === 'builtin') return null;
+    if ($('source-mode').value !== 'custom') return null;
     return Object.fromEntries(fields.map(field => [field, $('source-' + field).value]));
+  }
+
+  function selectedProvider() {
+    const group = $('source-group').value;
+    const selected = $('source-mode').value;
+    return selected === 'custom' ? sources[group].defaultProvider : selected;
   }
 
   function proxyMode() {
@@ -207,13 +234,13 @@
   $('source-mode').addEventListener('change', () => { renderSourceMode(); status('source-status', ''); });
   const sourceButtons = [$('source-test'), $('source-form').querySelector('[type="submit"]'), $('source-group'), $('source-mode')];
   $('source-test').addEventListener('click', () => void action(sourceButtons, 'source-status',
-    () => api.testSource($('source-group').value, sourceInput(), $('source-test-code').value),
+    () => api.testSource($('source-group').value, selectedProvider(), sourceInput(), $('source-test-code').value),
     result => '最新价 ' + result.price +
       (Number.isFinite(result.change) ? ' · ' + result.change.toFixed(2) + '%' : '')));
   $('source-form').addEventListener('submit', event => {
     event.preventDefault();
     if (sourceButtons[1].disabled) return;
-    void action(sourceButtons, 'source-status', () => api.saveSource($('source-group').value, sourceInput()), () => '来源已保存。');
+    void action(sourceButtons, 'source-status', () => api.saveSource($('source-group').value, selectedProvider(), sourceInput()), () => '来源已保存。');
   });
   $('proxy-mode').addEventListener('change', () => { proxyMode(); status('proxy-status', ''); });
   $('proxy-form').addEventListener('submit', event => {

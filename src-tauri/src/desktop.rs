@@ -1,5 +1,5 @@
 use crate::{
-    market::{self, History, Instrument, Market, Quote, Source, SourceGroup},
+    market::{self, History, Instrument, Market, Quote, QuoteProvider, Source, SourceGroup},
     market_state::MarketData,
     portfolio::{self, Alert, Monitor, MonitorAction, MonitorInput, Position, MAX_MONITORS},
     settings::{self, Period, Proxy, Settings},
@@ -130,7 +130,13 @@ async fn refresh_loop(app: AppHandle) {
         };
         let started = tokio::time::Instant::now();
         let _ = publish(&app);
-        let results = market::quotes(&client, &settings.watchlist, &settings.sources).await;
+        let results = market::quotes(
+            &client,
+            &settings.watchlist,
+            &settings.sources,
+            &settings.providers,
+        )
+        .await;
         let mut alerts = Vec::new();
         {
             let Ok(mut current) = desktop.settings.lock() else {
@@ -360,9 +366,13 @@ async fn remove_item(window: WebviewWindow, key: String) -> Result<()> {
 fn save_source(
     window: WebviewWindow,
     group: SourceGroup,
+    provider: QuoteProvider,
     mut source: Option<Source>,
 ) -> Result<()> {
     verify(&window, "panel")?;
+    if !provider.supports(group) {
+        return Err("此行情市场不支持所选数据源。".into());
+    }
     if let Some(source) = &mut source {
         source.validate()?;
     }
@@ -373,6 +383,11 @@ fn save_source(
                 settings.sources.insert(group, source);
             } else {
                 settings.sources.remove(&group);
+                if provider == QuoteProvider::Builtin {
+                    settings.providers.remove(&group);
+                } else {
+                    settings.providers.insert(group, provider);
+                }
             }
             Ok(())
         },
@@ -386,12 +401,16 @@ fn save_source(
 async fn test_source(
     window: WebviewWindow,
     group: SourceGroup,
+    provider: QuoteProvider,
     mut source: Option<Source>,
     code: String,
 ) -> Result<Quote> {
     verify(&window, "panel")?;
     if let Some(source) = &mut source {
         source.validate()?;
+    }
+    if !provider.supports(group) {
+        return Err("此行情市场不支持所选数据源。".into());
     }
     let (market, sample) = group.sample();
     let code = if code.trim().is_empty() {
@@ -409,7 +428,7 @@ async fn test_source(
         .map_err(failure)?
         .client
         .clone();
-    market::single_quote(&client, &item, source.as_ref()).await
+    market::single_quote_with_provider(&client, &item, source.as_ref(), provider).await
 }
 
 #[tauri::command]
@@ -417,9 +436,14 @@ async fn chart_preview(window: WebviewWindow, key: String, period: Period) -> Re
     verify(&window, "panel")?;
     let desktop = window.state::<Desktop>();
     let cache_key = (key, period);
-    let (item, client, listing, revision) = {
+    let (item, client, listing, provider, revision) = {
         let settings = desktop.settings.lock().map_err(failure)?;
         let item = find_item(&settings, &cache_key.0)?.clone();
+        let provider = settings
+            .providers
+            .get(&item.group())
+            .copied()
+            .unwrap_or_default();
         let data = desktop.data.lock().map_err(failure)?;
         if let Some(result) = data.cached_history(&cache_key) {
             return result;
@@ -428,10 +452,11 @@ async fn chart_preview(window: WebviewWindow, key: String, period: Period) -> Re
             item,
             data.client.clone(),
             data.listing(&cache_key.0),
+            provider,
             data.revision,
         )
     };
-    let result = market::history(&client, &item, listing.as_deref(), period).await;
+    let result = market::history(&client, &item, listing.as_deref(), period, provider).await;
     let mut data = desktop.data.lock().map_err(failure)?;
     if data.revision == revision {
         data.store_history(cache_key, result.clone());

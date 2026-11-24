@@ -55,9 +55,16 @@ impl MarketData {
     }
 
     pub fn change_source(&mut self, items: &[Instrument], group: SourceGroup) {
-        for item in items.iter().filter(|item| item.group() == group) {
-            self.rows.remove(&item.key());
+        let changed: Vec<_> = items
+            .iter()
+            .filter(|item| item.group() == group)
+            .map(Instrument::key)
+            .collect();
+        for key in &changed {
+            self.rows.remove(key);
         }
+        self.history
+            .retain(|(key, _), _| !changed.iter().any(|changed| changed == key));
         self.invalidate_quotes();
     }
 
@@ -110,7 +117,16 @@ impl MarketData {
                 "name": item.name,
                 "currency": item.currency(),
                 "base": matches!(item.market, market::Market::Crypto | market::Market::Perp).then(|| item.base()),
-                "source": if settings.sources.contains_key(&item.group()) { "自定义行情源" } else { item.source() },
+                "source": if settings.sources.contains_key(&item.group()) {
+                    "自定义行情源"
+                } else {
+                    settings
+                        .providers
+                        .get(&item.group())
+                        .copied()
+                        .unwrap_or_default()
+                        .label(item.group())
+                },
                 "quote": quote,
                 "samples": row.map(|row| &row.samples),
                 "cached": quote.is_some() && error.is_some(),
@@ -125,6 +141,7 @@ impl MarketData {
             "redUp": settings.red_up,
             "proxy": settings.proxy,
             "sources": settings.sources,
+            "providers": settings.providers,
             "monitors": settings.monitors,
             "interval": settings.interval,
             "chartPeriod": settings.selected_period.unwrap_or(Period::Day),

@@ -1,4 +1,4 @@
-use crate::market::{self, Instrument, Source, SourceGroup};
+use crate::market::{self, Instrument, QuoteProvider, Source, SourceGroup};
 use crate::portfolio::{Monitor, Position, MAX_MONITORS};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -90,6 +90,7 @@ pub struct Settings {
     pub red_up: bool,
     pub watchlist: Vec<Instrument>,
     pub sources: HashMap<SourceGroup, Source>,
+    pub providers: HashMap<SourceGroup, QuoteProvider>,
     pub monitors: Vec<Monitor>,
     pub positions: HashMap<String, Position>,
     pub interval: u64,
@@ -107,6 +108,7 @@ impl Default for Settings {
             red_up: true,
             watchlist: market::defaults(),
             sources: HashMap::new(),
+            providers: HashMap::new(),
             monitors: Vec::new(),
             positions: HashMap::new(),
             interval: 30,
@@ -133,6 +135,9 @@ pub fn load(file: &Path) -> Settings {
     settings
         .sources
         .retain(|_, source| source.validate().is_ok());
+    settings
+        .providers
+        .retain(|group, provider| provider.supports(*group));
     let keys: HashSet<_> = settings.watchlist.iter().map(Instrument::key).collect();
     settings
         .positions

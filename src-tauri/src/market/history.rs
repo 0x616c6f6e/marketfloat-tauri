@@ -1,5 +1,6 @@
 use super::{
-    binance_url, json, numeric, single_quote, tencent_request, Instrument, Market, SourceGroup,
+    binance_url, json, numeric, single_quote, tencent_request, Instrument, Market, QuoteProvider,
+    SourceGroup,
 };
 use crate::settings::Period;
 use chrono::{DateTime, Datelike, Days, Months, NaiveDate, Utc};
@@ -235,6 +236,7 @@ pub async fn history(
     item: &Instrument,
     listing: Option<&str>,
     period: Period,
+    provider: QuoteProvider,
 ) -> Result<History, String> {
     let mut history = match item.group() {
         SourceGroup::Cn | SourceGroup::Us => stocks(client, item, listing, period).await?,
@@ -244,6 +246,12 @@ pub async fn history(
             volume_unit: item.base().into(),
             adjusted: false,
         },
+        SourceGroup::Usdt | SourceGroup::Perp if provider == QuoteProvider::Gate => {
+            gate_history(client, item, period).await?
+        }
+        SourceGroup::Usdt | SourceGroup::Perp if provider == QuoteProvider::Okx => {
+            okx_history(client, item, period).await?
+        }
         SourceGroup::Usdt | SourceGroup::Perp => {
             let interval = match period {
                 Period::Day => "1d",
@@ -261,7 +269,7 @@ pub async fn history(
             }));
             History {
                 candles,
-                source: item.source(),
+                source: provider.label(item.group()),
                 volume_unit: item.base().into(),
                 adjusted: false,
             }
@@ -274,6 +282,130 @@ pub async fn history(
         .candles
         .drain(..history.candles.len().saturating_sub(LIMIT));
     Ok(history)
+}
+
+async fn gate_history(
+    client: &Client,
+    item: &Instrument,
+    period: Period,
+) -> Result<History, String> {
+    let interval = match period {
+        Period::Day => "1d",
+        Period::Week | Period::Month => "1d",
+    };
+    let limit = match period {
+        Period::Day => LIMIT,
+        Period::Week => LIMIT * 7,
+        Period::Month => LIMIT * 31,
+    };
+    let (url, query_key, pair, volume_unit) = match item.market {
+        Market::Perp => (
+            "https://api.gateio.ws/api/v4/futures/usdt/candlesticks",
+            "contract",
+            format!("{}_USDT", item.base()),
+            "USDT".to_owned(),
+        ),
+        Market::Crypto => (
+            "https://api.gateio.ws/api/v4/spot/candlesticks",
+            "currency_pair",
+            item.code.replace('-', "_"),
+            item.base().to_owned(),
+        ),
+        _ => return Err("Gate.io 仅支持 USDT 现货和永续 K 线。".into()),
+    };
+    let data = json(
+        client
+            .get(url)
+            .query(&[
+                (query_key, pair),
+                ("interval", interval.to_owned()),
+                ("limit", limit.to_string()),
+            ]),
+    )
+    .await?;
+    let daily = unique(rows(&data).filter_map(|row| {
+        let timestamp = (if item.market == Market::Perp {
+            numeric(row.get("t"))?
+        } else {
+            numeric(row.get(0))?
+        }) as i64;
+        let time = DateTime::from_timestamp(timestamp, 0)?;
+        let values = if item.market == Market::Perp {
+            ["o", "h", "l", "c"].map(|field| numeric(row.get(field)))
+        } else {
+            [5, 3, 4, 2].map(|index| numeric(row.get(index)))
+        };
+        candle(
+            time.date_naive(),
+            values,
+            if item.market == Market::Perp {
+                numeric(row.get("sum"))
+            } else {
+                numeric(row.get(6))
+            },
+        )
+    }));
+    let candles = if period == Period::Day {
+        daily
+    } else {
+        aggregate(daily, period)
+    };
+    Ok(History {
+        candles,
+        source: QuoteProvider::Gate.label(item.group()),
+        volume_unit,
+        adjusted: false,
+    })
+}
+
+async fn okx_history(
+    client: &Client,
+    item: &Instrument,
+    period: Period,
+) -> Result<History, String> {
+    let inst_id = match item.market {
+        Market::Perp => format!("{}-USDT-SWAP", item.base()),
+        Market::Crypto => item.code.clone(),
+        _ => return Err("OKX 仅支持 USDT 现货和永续 K 线。".into()),
+    };
+    let bar = match period {
+        Period::Day => "1D",
+        Period::Week => "1W",
+        Period::Month => "1M",
+    };
+    let data = json(
+        client
+            .get("https://www.okx.com/api/v5/market/candles")
+            .query(&[
+                ("instId", inst_id),
+                ("bar", bar.to_owned()),
+                ("limit", LIMIT.to_string()),
+            ]),
+    )
+    .await?;
+    if data.get("code").and_then(Value::as_str) != Some("0") {
+        return Err(data
+            .get("msg")
+            .and_then(Value::as_str)
+            .filter(|message| !message.is_empty())
+            .unwrap_or("OKX 未返回该交易对 K 线。")
+            .to_owned());
+    }
+    let candles = unique(rows(&data["data"]).filter_map(|row| {
+        let timestamp = numeric(row.get(0))? as i64;
+        let time = DateTime::from_timestamp_millis(timestamp)?;
+        candle(
+            time.date_naive(),
+            [1, 2, 3, 4].map(|index| numeric(row.get(index))),
+            numeric(row.get(if item.market == Market::Perp { 6 } else { 5 })),
+        )
+    }));
+    Ok(History {
+        candles,
+        source: QuoteProvider::Okx.label(item.group()),
+        volume_unit: item.base().into(),
+        adjusted: false,
+    })
 }
 
 #[cfg(test)]
