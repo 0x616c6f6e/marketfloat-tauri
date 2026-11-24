@@ -77,8 +77,7 @@ impl QuoteProvider {
     }
 
     pub fn supports(self, group: SourceGroup) -> bool {
-        matches!(self, Self::Builtin)
-            || matches!(group, SourceGroup::Usdt | SourceGroup::Perp)
+        matches!(self, Self::Builtin) || matches!(group, SourceGroup::Usdt | SourceGroup::Perp)
     }
 }
 

@@ -313,15 +313,11 @@ async fn gate_history(
         ),
         _ => return Err("Gate.io 仅支持 USDT 现货和永续 K 线。".into()),
     };
-    let data = json(
-        client
-            .get(url)
-            .query(&[
-                (query_key, pair),
-                ("interval", interval.to_owned()),
-                ("limit", limit.to_string()),
-            ]),
-    )
+    let data = json(client.get(url).query(&[
+        (query_key, pair),
+        ("interval", interval.to_owned()),
+        ("limit", limit.to_string()),
+    ]))
     .await?;
     let daily = unique(rows(&data).filter_map(|row| {
         let timestamp = (if item.market == Market::Perp {
